@@ -3,181 +3,475 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FIRE & Drawdown Calculator</title>
+    <title>QuickFIRE - Advanced FI/RE Simulator</title>
     
-    <!-- Tailwind CSS for Styling -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React and ReactDOM -->
+    <!-- React & ReactDOM (Production) -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     
-    <!-- Babel for parsing JSX in the browser -->
+    <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- Recharts and PropTypes (Pinned to stable versions for browser use) -->
-    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
-    <script src="https://unpkg.com/recharts@2.1.9/umd/Recharts.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Chart.js and React-Chartjs-2 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <style>
-        body { background-color: #f3f4f6; }
-        input[type="range"] { accent-color: #3b82f6; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        input[type="range"] { accent-color: #6366f1; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
     </style>
 </head>
-<body>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useMemo } = React;
-        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } = window.Recharts;
+        const { useState, useMemo, useEffect, useRef } = React;
 
-        function FireCalculator() {
-            // Core Inputs
-            const [corpus, setCorpus] = useState(20000000);
-            const [monthlyPayout, setMonthlyPayout] = useState(90000);
-            const [inflation, setInflation] = useState(6.0);
+        // Currency Configs
+        const CURRENCIES = {
+            USD: { symbol: '$', code: 'USD', locale: 'en-US', divisor: 1000000, suffix: 'M' },
+            INR: { symbol: '₹', code: 'INR', locale: 'en-IN', divisor: 10000000, suffix: 'Cr' },
+            EUR: { symbol: '€', code: 'EUR', locale: 'de-DE', divisor: 1000000, suffix: 'M' },
+            GBP: { symbol: '£', code: 'GBP', locale: 'en-GB', divisor: 1000000, suffix: 'M' },
+            JPY: { symbol: '¥', code: 'JPY', locale: 'ja-JP', divisor: 100000000, suffix: 'B' },
+            AUD: { symbol: 'A$', code: 'AUD', locale: 'en-AU', divisor: 1000000, suffix: 'M' }
+        };
+
+        function QuickFireApp() {
+            // Currency & Core Inputs
+            const [currencyKey, setCurrencyKey] = useState('USD');
+            const currency = CURRENCIES[currencyKey];
+
+            const [corpus, setCorpus] = useState(1500000);
+            const [monthlyPayout, setMonthlyPayout] = useState(5000);
+            const [inflation, setInflation] = useState(3.0);
             const [years, setYears] = useState(40);
 
-            // Allocations
-            const [eqAlloc, setEqAlloc] = useState(50);
-            const [debtAlloc, setDebtAlloc] = useState(40);
-            
-            // Returns
-            const [eqReturn, setEqReturn] = useState(11.5);
-            const [debtReturn, setDebtReturn] = useState(7.0);
-            const [cashReturn, setCashReturn] = useState(5.0);
-
-            // Auto-calculate cash allocation
+            // Asset Allocations
+            const [eqAlloc, setEqAlloc] = useState(60);
+            const [debtAlloc, setDebtAlloc] = useState(30);
             const cashAlloc = Math.max(0, 100 - eqAlloc - debtAlloc);
-            const normalizedEq = (eqAlloc / (eqAlloc + debtAlloc + cashAlloc)) || 0;
-            const normalizedDebt = (debtAlloc / (eqAlloc + debtAlloc + cashAlloc)) || 0;
-            const normalizedCash = (cashAlloc / (eqAlloc + debtAlloc + cashAlloc)) || 0;
 
-            const blendedReturn = (
-                (normalizedEq * eqReturn) + 
-                (normalizedDebt * debtReturn) + 
-                (normalizedCash * cashReturn)
-            ).toFixed(2);
+            // Asset Returns
+            const [eqReturn, setEqReturn] = useState(9.5);
+            const [debtReturn, setDebtReturn] = useState(4.5);
+            const [cashReturn, setCashReturn] = useState(2.5);
 
-            const simulationData = useMemo(() => {
+            // Life Events (Periodic cash inflows/outflows)
+            const [events, setEvents] = useState([
+                { id: 1, name: "College Expense", year: 15, amount: -80000, type: 'one-time' },
+                { id: 2, name: "Property Sale", year: 10, amount: 250000, type: 'one-time' }
+            ]);
+
+            const [newEventName, setNewEventName] = useState('');
+            const [newEventYear, setNewEventYear] = useState(5);
+            const [newEventAmount, setNewEventAmount] = useState(50000);
+            const [newEventIsExpense, setNewEventIsExpense] = useState(true);
+
+            const [activeTab, setActiveTab] = useState('params');
+
+            // Formatter
+            const formatCurr = (val, compact = false) => {
+                if (compact) {
+                    if (currencyKey === 'INR') {
+                        if (Math.abs(val) >= 10000000) return `${currency.symbol}${(val / 10000000).toFixed(2)} ${currency.suffix}`;
+                        if (Math.abs(val) >= 100000) return `${currency.symbol}${(val / 100000).toFixed(2)} Lakh`;
+                    } else {
+                        if (Math.abs(val) >= 1000000) return `${currency.symbol}${(val / 1000000).toFixed(2)} ${currency.suffix}`;
+                        if (Math.abs(val) >= 1000) return `${currency.symbol}${(val / 1000).toFixed(0)}k`;
+                    }
+                }
+                return new Intl.NumberFormat(currency.locale, {
+                    style: 'currency',
+                    currency: currency.code,
+                    maximumFractionDigits: 0
+                }).format(val);
+            };
+
+            // Calculate Blended Return
+            const totalAlloc = eqAlloc + debtAlloc + cashAlloc;
+            const normEq = eqAlloc / totalAlloc;
+            const normDebt = debtAlloc / totalAlloc;
+            const normCash = cashAlloc / totalAlloc;
+            
+            const blendedReturn = useMemo(() => {
+                return (normEq * eqReturn + normDebt * debtReturn + normCash * cashReturn).toFixed(2);
+            }, [normEq, normDebt, normCash, eqReturn, debtReturn, cashReturn]);
+
+            // Simulation Engine
+            const simulation = useMemo(() => {
                 let balance = corpus;
                 let currentMonthly = monthlyPayout;
+                const monthlyRate = Number(blendedReturn) / 100 / 12;
                 const data = [];
-                const monthlyRate = blendedReturn / 100 / 12;
+                let depletedYr = null;
 
                 for (let y = 0; y <= years; y++) {
-                    data.push({
-                        year: `Year ${y}`,
-                        balance: Math.max(0, Math.round(balance)),
-                        withdrawal: y === 0 ? 0 : Math.round(currentMonthly * 12)
+                    // Check for Life Events in current year
+                    const yearEvents = events.filter(e => e.year === y);
+                    let eventImpact = 0;
+                    yearEvents.forEach(e => {
+                        eventImpact += e.amount;
                     });
+
+                    // Add life event to balance at start of year
+                    balance += eventImpact;
+
+                    const annualDraw = currentMonthly * 12;
+
+                    data.push({
+                        year: y,
+                        label: `Yr ${y}`,
+                        balance: Math.max(0, Math.round(balance)),
+                        withdrawal: Math.round(annualDraw),
+                        eventImpact: eventImpact
+                    });
+
+                    if (balance <= 0 && depletedYr === null) {
+                        depletedYr = y;
+                    }
 
                     if (y === years) break;
 
+                    // Monthly simulation loop
                     for (let m = 0; m < 12; m++) {
                         balance -= currentMonthly;
-                        if (balance < 0) {
+                        if (balance <= 0) {
                             balance = 0;
                             break;
                         }
                         balance *= (1 + monthlyRate);
                     }
+                    // Inflation step-up
                     currentMonthly *= (1 + inflation / 100);
                 }
-                return data;
-            }, [corpus, monthlyPayout, inflation, years, blendedReturn]);
 
-            const finalBalance = simulationData[simulationData.length - 1].balance;
-            const depletedYear = simulationData.findIndex(d => d.balance === 0);
-            const status = depletedYear !== -1 ? `Depleted in Year ${depletedYear}` : 'Portfolio Survived';
-            
-            const formatINR = (val) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(val);
+                return { data, depletedYr };
+            }, [corpus, monthlyPayout, inflation, years, blendedReturn, events]);
+
+            // Event Handlers
+            const addEvent = () => {
+                if (!newEventName) return;
+                const amt = newEventIsExpense ? -Math.abs(newEventAmount) : Math.abs(newEventAmount);
+                setEvents([...events, {
+                    id: Date.now(),
+                    name: newEventName,
+                    year: Number(newEventYear),
+                    amount: amt
+                }]);
+                setNewEventName('');
+            };
+
+            const removeEvent = (id) => {
+                setEvents(events.filter(e => e.id !== id));
+            };
+
+            // Presets
+            const applyPreset = (type) => {
+                if (type === 'lean') {
+                    setEqAlloc(40); setDebtAlloc(50); setMonthlyPayout(3000); setYears(30);
+                } else if (type === 'growth') {
+                    setEqAlloc(80); setDebtAlloc(15); setMonthlyPayout(5000); setYears(45);
+                } else if (type === 'fat') {
+                    setEqAlloc(70); setDebtAlloc(25); setMonthlyPayout(12000); setYears(40);
+                }
+            };
+
+            // Chart Render
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+
+            useEffect(() => {
+                if (!chartRef.current) return;
+                const ctx = chartRef.current.getContext('2d');
+
+                if (chartInstance.current) {
+                    chartInstance.current.destroy();
+                }
+
+                chartInstance.current = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: simulation.data.map(d => d.label),
+                        datasets: [
+                            {
+                                label: 'Portfolio Balance',
+                                data: simulation.data.map(d => d.balance),
+                                borderColor: '#6366f1',
+                                backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                                borderWidth: 3,
+                                fill: true,
+                                tension: 0.3
+                            },
+                            {
+                                label: 'Annual Withdrawal',
+                                data: simulation.data.map(d => d.withdrawal),
+                                borderColor: '#ef4444',
+                                borderWidth: 2,
+                                borderDash: [5, 5],
+                                fill: false,
+                                tension: 0.1
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { labels: { color: '#94a3b8' } },
+                            tooltip: {
+                                callbacks: {
+                                    label: (ctx) => `${ctx.dataset.label}: ${formatCurr(ctx.raw, true)}`
+                                }
+                            }
+                        },
+                        scales: {
+                            x: { ticks: { color: '#64748b' }, grid: { color: '#334155' } },
+                            y: { 
+                                ticks: { 
+                                    color: '#64748b',
+                                    callback: (v) => formatCurr(v, true)
+                                }, 
+                                grid: { color: '#334155' } 
+                            }
+                        }
+                    }
+                });
+            }, [simulation, currencyKey]);
 
             return (
-                <div className="max-w-6xl mx-auto p-4 py-8">
-                    <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">Interactive FIRE & Drawdown Calculator</h1>
-                    
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {/* Controls Panel */}
-                        <div className="lg:col-span-1 bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                            <h2 className="text-xl font-semibold mb-4 border-b pb-2">Portfolio Variables</h2>
-                            
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">Initial Corpus: {formatINR(corpus)}</label>
-                                    <input type="range" min="5000000" max="100000000" step="1000000" value={corpus} onChange={e => setCorpus(Number(e.target.value))} className="w-full mt-1" />
-                                </div>
-                                
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">Year 1 Monthly Payout: {formatINR(monthlyPayout)}</label>
-                                    <input type="range" min="20000" max="500000" step="5000" value={monthlyPayout} onChange={e => setMonthlyPayout(Number(e.target.value))} className="w-full mt-1" />
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">Inflation Rate: {inflation}%</label>
-                                    <input type="range" min="2" max="12" step="0.5" value={inflation} onChange={e => setInflation(Number(e.target.value))} className="w-full mt-1" />
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">Simulation Years: {years}</label>
-                                    <input type="range" min="10" max="60" step="1" value={years} onChange={e => setYears(Number(e.target.value))} className="w-full mt-1" />
-                                </div>
-
-                                <h2 className="text-xl font-semibold mt-6 mb-2 border-b pb-2">Asset Allocation</h2>
-                                
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 text-blue-600">Equity Allocation: {Math.round(normalizedEq * 100)}% (Return: {eqReturn}%)</label>
-                                    <input type="range" min="0" max="100" value={eqAlloc} onChange={e => setEqAlloc(Number(e.target.value))} className="w-full mt-1" />
-                                    <input type="range" min="5" max="20" step="0.5" value={eqReturn} onChange={e => setEqReturn(Number(e.target.value))} className="w-full mt-1" />
-                                </div>
-
-                                <div className="mt-2">
-                                    <label className="block text-sm font-medium text-gray-700 text-green-600">Debt/FD Allocation: {Math.round(normalizedDebt * 100)}% (Return: {debtReturn}%)</label>
-                                    <input type="range" min="0" max="100" value={debtAlloc} onChange={e => setDebtAlloc(Number(e.target.value))} className="w-full mt-1" />
-                                    <input type="range" min="4" max="12" step="0.5" value={debtReturn} onChange={e => setDebtReturn(Number(e.target.value))} className="w-full mt-1" />
-                                </div>
-                                
-                                <div className="mt-2 text-sm text-gray-600 bg-gray-50 p-3 rounded border">
-                                    Cash Allocation (Auto): <b>{Math.round(normalizedCash * 100)}%</b> @ {cashReturn}% return
-                                </div>
-                            </div>
+                <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+                    {/* Header */}
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 border-b border-slate-800 pb-6">
+                        <div>
+                            <h1 className="text-3xl font-extrabold text-white tracking-tight flex items-center gap-2">
+                                <span>⚡ QuickFIRE</span>
+                                <span className="text-xs font-semibold uppercase bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 px-2 py-0.5 rounded-full">Pro Engine</span>
+                            </h1>
+                            <p className="text-slate-400 text-sm mt-1">Simulate multi-decade retirement scenarios with real-life events & custom returns</p>
                         </div>
 
-                        {/* Visualization Panel */}
-                        <div className="lg:col-span-2 space-y-6">
+                        {/* Currency Selector */}
+                        <div className="flex items-center gap-3 bg-slate-800/80 p-2 rounded-xl border border-slate-700">
+                            <span className="text-xs font-medium text-slate-400 pl-2">Currency:</span>
+                            <div className="flex gap-1">
+                                {Object.keys(CURRENCIES).map(key => (
+                                    <button
+                                        key={key}
+                                        onClick={() => setCurrencyKey(key)}
+                                        className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${currencyKey === key ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`}
+                                    >
+                                        {key} ({CURRENCIES[key].symbol})
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Top Metrics Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+                        <div className="bg-slate-800/50 backdrop-blur border border-slate-700/60 rounded-2xl p-5">
+                            <span className="text-xs font-semibold uppercase text-slate-400">Blended Return</span>
+                            <div className="text-2xl font-bold text-indigo-400 mt-1">{blendedReturn}%</div>
+                            <span className="text-xs text-slate-500 mt-1 block">Weighted net asset rate</span>
+                        </div>
+
+                        <div className={`backdrop-blur border rounded-2xl p-5 ${simulation.depletedYr ? 'bg-red-950/20 border-red-800/50' : 'bg-emerald-950/20 border-emerald-800/50'}`}>
+                            <span className="text-xs font-semibold uppercase text-slate-400">Survival Status</span>
+                            <div className={`text-2xl font-bold mt-1 ${simulation.depletedYr ? 'text-red-400' : 'text-emerald-400'}`}>
+                                {simulation.depletedYr ? `Depleted Year ${simulation.depletedYr}` : 'Portfolio Survived'}
+                            </div>
+                            <span className="text-xs text-slate-500 mt-1 block">Target horizon: {years} years</span>
+                        </div>
+
+                        <div className="bg-slate-800/50 backdrop-blur border border-slate-700/60 rounded-2xl p-5">
+                            <span className="text-xs font-semibold uppercase text-slate-400">Initial Drawdown Rate</span>
+                            <div className="text-2xl font-bold text-amber-400 mt-1">
+                                {((monthlyPayout * 12 / corpus) * 100).toFixed(2)}%
+                            </div>
+                            <span className="text-xs text-slate-500 mt-1 block">Annualized initial withdrawal</span>
+                        </div>
+
+                        <div className="bg-slate-800/50 backdrop-blur border border-slate-700/60 rounded-2xl p-5">
+                            <span className="text-xs font-semibold uppercase text-slate-400">Terminal Portfolio</span>
+                            <div className="text-2xl font-bold text-white mt-1">
+                                {formatCurr(simulation.data[simulation.data.length - 1].balance, true)}
+                            </div>
+                            <span className="text-xs text-slate-500 mt-1 block">Value at Year {years}</span>
+                        </div>
+                    </div>
+
+                    {/* Main Grid */}
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                        {/* Control Panel (5 cols) */}
+                        <div className="lg:col-span-5 bg-slate-800/40 border border-slate-700/80 rounded-2xl p-6">
                             
-                            {/* Summary Cards */}
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 text-center">
-                                    <p className="text-sm text-gray-500 font-medium">Blended Portfolio Return</p>
-                                    <p className="text-2xl font-bold text-gray-800">{blendedReturn}%</p>
-                                </div>
-                                <div className={`bg-white p-4 rounded-xl shadow-sm border border-gray-100 text-center ${depletedYear !== -1 ? 'border-red-400 bg-red-50' : 'border-green-400 bg-green-50'}`}>
-                                    <p className="text-sm text-gray-700 font-medium">Simulation Status</p>
-                                    <p className={`text-2xl font-bold ${depletedYear !== -1 ? 'text-red-600' : 'text-green-600'}`}>{status}</p>
-                                </div>
-                                <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 text-center">
-                                    <p className="text-sm text-gray-500 font-medium">Terminal Wealth (Year {years})</p>
-                                    <p className="text-xl font-bold text-gray-800">{formatINR(finalBalance)}</p>
-                                </div>
+                            {/* Navigation Tabs */}
+                            <div className="flex gap-2 border-b border-slate-700 pb-4 mb-6">
+                                <button 
+                                    onClick={() => setActiveTab('params')} 
+                                    className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${activeTab === 'params' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-700/50'}`}
+                                >
+                                    Core Variables
+                                </button>
+                                <button 
+                                    onClick={() => setActiveTab('events')} 
+                                    className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 ${activeTab === 'events' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-700/50'}`}
+                                >
+                                    <span>Life Events</span>
+                                    {events.length > 0 && <span className="bg-indigo-400 text-slate-900 text-xs rounded-full px-2 py-0.5 font-bold">{events.length}</span>}
+                                </button>
                             </div>
 
-                            {/* Chart */}
-                            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-[500px]">
-                                <h3 className="text-lg font-semibold mb-4 text-center">Portfolio Balance Over {years} Years</h3>
-                                <ResponsiveContainer width="100%" height="90%">
-                                    <LineChart data={simulationData} margin={{ top: 5, right: 20, bottom: 5, left: 20 }}>
-                                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                                        <XAxis dataKey="year" minTickGap={20} />
-                                        <YAxis tickFormatter={(value) => `₹${(value / 10000000).toFixed(1)}Cr`} width={80} />
-                                        <Tooltip formatter={(value, name) => [formatINR(value), name === 'balance' ? 'Portfolio Balance' : 'Annual Withdrawal']} />
-                                        <Legend />
-                                        <Line type="monotone" dataKey="balance" stroke="#3b82f6" strokeWidth={3} dot={false} name="Portfolio Balance" />
-                                        <Line type="monotone" dataKey="withdrawal" stroke="#ef4444" strokeWidth={2} dot={false} name="Annual Withdrawal (Inflation Adjusted)" />
-                                    </LineChart>
-                                </ResponsiveContainer>
+                            {activeTab === 'params' ? (
+                                <div className="space-y-6">
+                                    {/* Presets */}
+                                    <div>
+                                        <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-2">Quick Strategy Presets</label>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <button onClick={() => applyPreset('lean')} className="bg-slate-700/50 hover:bg-slate-700 text-slate-300 border border-slate-600 text-xs py-2 rounded-lg font-medium">LeanFIRE</button>
+                                            <button onClick={() => applyPreset('growth')} className="bg-slate-700/50 hover:bg-slate-700 text-slate-300 border border-slate-600 text-xs py-2 rounded-lg font-medium">Balanced Growth</button>
+                                            <button onClick={() => applyPreset('fat')} className="bg-slate-700/50 hover:bg-slate-700 text-slate-300 border border-slate-600 text-xs py-2 rounded-lg font-medium">FatFIRE</button>
+                                        </div>
+                                    </div>
+
+                                    {/* Inputs */}
+                                    <div className="space-y-4">
+                                        <div>
+                                            <div className="flex justify-between text-sm mb-1">
+                                                <span className="text-slate-300 font-medium">Initial Corpus</span>
+                                                <span className="text-indigo-400 font-bold">{formatCurr(corpus)}</span>
+                                            </div>
+                                            <input type="range" min={currencyKey === 'INR' ? 2000000 : 100000} max={currencyKey === 'INR' ? 200000000 : 10000000} step={currencyKey === 'INR' ? 1000000 : 50000} value={corpus} onChange={e => setCorpus(Number(e.target.value))} className="w-full" />
+                                        </div>
+
+                                        <div>
+                                            <div className="flex justify-between text-sm mb-1">
+                                                <span className="text-slate-300 font-medium">Year 1 Monthly Payout</span>
+                                                <span className="text-indigo-400 font-bold">{formatCurr(monthlyPayout)}/mo</span>
+                                            </div>
+                                            <input type="range" min={currencyKey === 'INR' ? 10000 : 500} max={currencyKey === 'INR' ? 1000000 : 50000} step={currencyKey === 'INR' ? 5000 : 250} value={monthlyPayout} onChange={e => setMonthlyPayout(Number(e.target.value))} className="w-full" />
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <div className="flex justify-between text-sm mb-1">
+                                                    <span className="text-slate-300 font-medium">Inflation Rate</span>
+                                                    <span className="text-amber-400 font-bold">{inflation}%</span>
+                                                </div>
+                                                <input type="range" min="1" max="12" step="0.5" value={inflation} onChange={e => setInflation(Number(e.target.value))} className="w-full" />
+                                            </div>
+
+                                            <div>
+                                                <div className="flex justify-between text-sm mb-1">
+                                                    <span className="text-slate-300 font-medium">Horizon</span>
+                                                    <span className="text-indigo-400 font-bold">{years} yrs</span>
+                                                </div>
+                                                <input type="range" min="10" max="60" step="1" value={years} onChange={e => setYears(Number(e.target.value))} className="w-full" />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Allocations & Asset Returns */}
+                                    <div className="border-t border-slate-700 pt-4 space-y-4">
+                                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Asset Allocation & Expected Net Returns</span>
+
+                                        <div>
+                                            <div className="flex justify-between text-xs mb-1">
+                                                <span className="text-indigo-300">Equity ({Math.round(normEq * 100)}%)</span>
+                                                <span className="text-slate-400">Return: {eqReturn}%</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <input type="range" min="0" max="100" value={eqAlloc} onChange={e => setEqAlloc(Number(e.target.value))} className="w-2/3" />
+                                                <input type="range" min="4" max="18" step="0.5" value={eqReturn} onChange={e => setEqReturn(Number(e.target.value))} className="w-1/3" />
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <div className="flex justify-between text-xs mb-1">
+                                                <span className="text-emerald-300">Debt/FD ({Math.round(normDebt * 100)}%)</span>
+                                                <span className="text-slate-400">Return: {debtReturn}%</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <input type="range" min="0" max="100" value={debtAlloc} onChange={e => setDebtAlloc(Number(e.target.value))} className="w-2/3" />
+                                                <input type="range" min="2" max="12" step="0.5" value={debtReturn} onChange={e => setDebtReturn(Number(e.target.value))} className="w-1/3" />
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-slate-900/60 p-3 rounded-xl flex justify-between items-center text-xs text-slate-400">
+                                            <span>Cash / Liquid Buffer (Auto): <b>{Math.round(normCash * 100)}%</b></span>
+                                            <span>Return: <b>{cashReturn}%</b></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                /* Life Events Tab */
+                                <div className="space-y-6">
+                                    <div className="bg-slate-900/60 p-4 rounded-xl space-y-3 border border-slate-700/60">
+                                        <span className="text-xs font-semibold text-indigo-400 uppercase tracking-wide block">Add One-off Expense / Inflow</span>
+                                        <input 
+                                            type="text" 
+                                            placeholder="Event Name (e.g. Property Purchase)" 
+                                            value={newEventName} 
+                                            onChange={e => setNewEventName(e.target.value)} 
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" 
+                                        />
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label className="text-xs text-slate-400 block mb-1">Occurs in Year</label>
+                                                <input type="number" min="1" max={years} value={newEventYear} onChange={e => setNewEventYear(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-white" />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs text-slate-400 block mb-1">Amount ({currency.symbol})</label>
+                                                <input type="number" value={newEventAmount} onChange={e => setNewEventAmount(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-white" />
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2 items-center">
+                                            <button onClick={() => setNewEventIsExpense(true)} className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${newEventIsExpense ? 'bg-red-600 text-white' : 'bg-slate-800 text-slate-400'}`}>Expense (Outflow)</button>
+                                            <button onClick={() => setNewEventIsExpense(false)} className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${!newEventIsExpense ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400'}`}>Inflow / Income</button>
+                                        </div>
+                                        <button onClick={addEvent} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded-lg text-xs font-bold transition-all">Add Event to Simulation</button>
+                                    </div>
+
+                                    {/* Event List */}
+                                    <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
+                                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Active Real Life Events</span>
+                                        {events.length === 0 ? (
+                                            <p className="text-xs text-slate-500 italic text-center py-4">No custom events added yet.</p>
+                                        ) : (
+                                            events.map(ev => (
+                                                <div key={ev.id} className="flex justify-between items-center bg-slate-800 p-3 rounded-xl border border-slate-700 text-xs">
+                                                    <div>
+                                                        <div className="font-semibold text-white">{ev.name}</div>
+                                                        <div className="text-slate-400">Year {ev.year} • <span className={ev.amount < 0 ? 'text-red-400' : 'text-emerald-400'}>{formatCurr(ev.amount)}</span></div>
+                                                    </div>
+                                                    <button onClick={() => removeEvent(ev.id)} className="text-slate-500 hover:text-red-400 p-1">✕</button>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                        </div>
+
+                        {/* Chart Area (7 cols) */}
+                        <div className="lg:col-span-7 bg-slate-800/40 border border-slate-700/80 rounded-2xl p-6 flex flex-col justify-between min-h-[500px]">
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="text-lg font-bold text-white">Portfolio Trajectory & Cash Flows</h3>
+                                <div className="text-xs text-slate-400">Adjust parameters on the left to benchmark live</div>
                             </div>
 
+                            <div className="relative w-full h-[420px]">
+                                <canvas ref={chartRef}></canvas>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -185,7 +479,7 @@
         }
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<FireCalculator />);
+        root.render(<QuickFireApp />);
     </script>
 </body>
 </html>
